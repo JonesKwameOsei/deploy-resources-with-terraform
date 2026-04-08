@@ -22,20 +22,14 @@ variable "environment" {
 
 variable "global_bool" {
   description = "Set true as a global selector"
-  type = bool
-  default = true
-}
-
-variable "algorithm_key" {
-  description = "Key for algorithm"
-  type = string
-  default = "AES256"
+  type        = bool
+  default     = true
 }
 
 variable "versioning_status" {
   description = "Status of S3 bucket versioning"
-  type = string
-  default = "Enabled"
+  type        = string
+  default     = "Enabled"
 }
 
 variable "byte_length" {

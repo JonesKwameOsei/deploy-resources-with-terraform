@@ -1,12 +1,11 @@
 ###############################################################################
 # infra/providers.tf
 #
-# PURPOSE: Declares required Terraform and provider versions, and configures
-#          the AWS provider with a region and default resource tags.
+# PURPOSE: Declares required Terraform and provider versions.
 #
-# WHY PIN VERSIONS: Without version constraints, terraform init will pull the
-# latest provider, which may introduce breaking changes. Pinning to ~> 5.0
-# allows patch updates (5.0.1, 5.1.0) but blocks major version jumps.
+# VERSION PINNING: ~> 5.0 allows 5.x.x patch/minor updates but blocks 6.0.
+# The random provider is required by the secrets module for credential
+# generation.
 ###############################################################################
 
 terraform {
@@ -17,20 +16,18 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
 
-  # Default tags are applied to every resource created by this provider.
-  # This satisfies audit requirements without repeating tags on every resource.
+  # Default tags applied to every resource. Defined in locals.tf.
   default_tags {
-    tags = {
-      Project     = "VaultBridge"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-      Owner       = "devops-team"
-    }
+    tags = local.common_tags
   }
 }

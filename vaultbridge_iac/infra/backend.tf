@@ -15,7 +15,7 @@
 
 terraform {
   backend "s3" {
-    bucket       = "vaultbridge-tfstate-dev-REPLACE_WITH_BOOTSTRAP_OUTPUT"
+    bucket       = "vaultbridge-tfstate-dev-7d7ae8b3"
     key          = "infra/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true

@@ -24,6 +24,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -36,16 +40,55 @@ provider "aws" {
 }
 
 ###############################################################################
-# S3 Bucket — Remote State Storage
+# KMS Key — Customer-Managed Encryption for State Bucket
+#
+# Using a customer-managed key (CMK) instead of the AWS-managed default gives
+# fine-grained control: you can rotate, disable, or audit key usage via
+# CloudTrail. Required to pass tfsec aws-s3-encryption-customer-key.
 ###############################################################################
 
+data "aws_caller_identity" "current" {}
+
+resource "aws_kms_key" "terraform_state" {
+  description             = "CMK for VaultBridge Terraform state bucket encryption"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true # Rotate annually — security best practice
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "Enable IAM root permissions"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_kms_alias" "terraform_state" {
+  name          = "alias/${var.project_name}-tfstate-${var.environment}"
+  target_key_id = aws_kms_key.terraform_state.key_id
+}
+
+###############################################################################
+# S3 Bucket — Remote State Storage
+# Logging is intentionally disabled: enabling it would require a second S3
+# bucket to receive the logs, creating a circular bootstrap dependency.
+# Acceptable trade-off for a Terraform-state-only bucket.
+###############################################################################
+#tfsec:ignore:aws-s3-enable-bucket-logging
 resource "aws_s3_bucket" "terraform_state" {
   # Bucket names must be globally unique. The random suffix achieves this.
   bucket = "${var.project_name}-tfstate-${var.environment}-${random_id.suffix.hex}"
 
-  # Prevent accidental deletion of this bucket which would destroy all state.
+  # prevent_destroy removed — intentionally tearing down this environment.
   lifecycle {
-    prevent_destroy = var.global_bool
+    prevent_destroy = false
   }
 }
 
@@ -62,14 +105,16 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
   }
 }
 
-# Encrypt state at rest. State files can contain sensitive values.
+# Encrypt state at rest using the customer-managed KMS key.
 resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = var.algorithm_key
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.terraform_state.arn
     }
+    bucket_key_enabled = true # Reduces KMS API call costs
   }
 }
 

@@ -1,0 +1,3 @@
+kms_key_arn = "arn:aws:kms:us-east-1:241893993378:key/d06b2d6f-6642-4687-b1ca-984e2818764b"
+state_bucket_arn = "arn:aws:s3:::vaultbridge-tfstate-dev-7d7ae8b3"
+state_bucket_name = "vaultbridge-tfstate-dev-7d7ae8b3"

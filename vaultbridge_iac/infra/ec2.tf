@@ -1,75 +1,105 @@
 ###############################################################################
 # infra/ec2.tf
 #
-# PURPOSE: Provisions the application server — EC2 instance, key pair import,
-#          and Elastic IP for a stable public address.
+# PURPOSE: Provisions the application server — EC2 instance, Elastic IP.
 #
-# KEY PAIR NOTE: We reference an existing key pair by name (var.key_pair_name).
-# The private key must be stored securely by the operator and never committed
-# to git. To create a key pair:
+# IAM INSTANCE PROFILE: The EC2 instance is assigned the instance profile
+#   from the iam module. This grants the application process permission to
+#   call Secrets Manager GetSecretValue at runtime — no credentials on disk.
+#
+# SSM SESSION MANAGER: Port 22 / SSH is the only inbound rule on the SG.
+#   For production, consider removing SSH entirely and using SSM Session
+#   Manager exclusively (the IAM role already includes the managed policy).
+#
+# KEY PAIR: References an existing key pair by name. To create one:
 #   ssh-keygen -t ed25519 -C "vaultbridge-dev" -f ~/.ssh/vaultbridge_dev
 #   aws ec2 import-key-pair --key-name vaultbridge-dev \
 #     --public-key-material fileb://~/.ssh/vaultbridge_dev.pub
 ###############################################################################
 
-# ── EC2 Instance ──────────────────────────────────────────────────────────────
-
 resource "aws_instance" "app_server" {
-  ami                    = var.ec2_ami_id
+  ami                    = data.aws_ami.amiID.id
   instance_type          = var.ec2_instance_type
   subnet_id              = aws_subnet.public[0].id
   vpc_security_group_ids = [aws_security_group.ec2.id]
   key_name               = var.key_pair_name
 
-  # Disable public IP — we attach an Elastic IP instead for a stable address.
+  # IAM instance profile — grants the app permission to call Secrets Manager
+  iam_instance_profile = module.iam.ec2_instance_profile_name
+
+  # user_data — runs once at first boot as root (cloud-init).
+  # secret_arn is intentionally NOT baked into user_data — it causes hash
+  # drift when master_user_secret is populated mid-apply. Instead, the ARN
+  # is stored in an SSM Parameter (see aws_ssm_parameter.db_secret_arn below)
+  # and db-connect.sh reads it from SSM at runtime.
+  user_data = templatefile("${path.module}/db_setup.sh", {
+    aws_region = var.aws_region
+    db_host    = split(":", aws_db_instance.postgres.endpoint)[0]
+    db_name    = var.db_name
+    db_port    = 5432
+    ssm_secret_arn_param = "/${var.project_name}/${var.environment}/db-secret-arn"
+  })
+
+  # Replace the instance if user_data changes (new script = new bootstrap)
+  user_data_replace_on_change = true
+
+  # Disable auto-assigned public IP — Elastic IP is used instead
   associate_public_ip_address = false
 
-  # Encrypt the root volume at rest.
   root_block_device {
-    volume_type           = "gp3"
-    volume_size           = 20
+    volume_type           = var.volume_type
+    volume_size           = var.volume_size
     encrypted             = true
     delete_on_termination = true
 
     tags = {
-      Name = "${var.project_name}-root-volume-${var.environment}"
+      Name = local.names.root_volume
     }
   }
 
-  # IMDSv2 — require token-based metadata access to prevent SSRF attacks
-  # that exploit the EC2 metadata endpoint.
+  # IMDSv2 — token-based metadata access prevents SSRF credential theft
   metadata_options {
     http_endpoint               = "enabled"
-    http_tokens                 = "required" # Enforces IMDSv2
+    http_tokens                 = "required"
     http_put_response_hop_limit = 1
   }
 
-  # Monitoring — enables detailed 1-minute CloudWatch metrics.
   monitoring = true
 
   tags = {
-    Name = "${var.project_name}-app-server-${var.environment}"
+    Name = local.names.ec2
     Role = "application"
   }
 
   lifecycle {
-    # Prevent accidental replacement if the AMI ID is updated.
-    # Remove this if you intentionally want to replace the instance.
     ignore_changes = [ami]
   }
 }
 
 # ── Elastic IP ────────────────────────────────────────────────────────────────
-# A static public IP that persists across instance stop/start cycles.
-# Without this, the public IP changes every time the instance restarts.
 
 resource "aws_eip" "app_server" {
   domain   = "vpc"
   instance = aws_instance.app_server.id
 
   tags = {
-    Name = "${var.project_name}-eip-${var.environment}"
+    Name = local.names.eip
   }
 
   depends_on = [aws_internet_gateway.main]
+}
+
+# ── SSM Parameter — DB Secret ARN ─────────────────────────────────────────────
+# Stores the RDS-managed secret ARN so db-connect.sh can read it at runtime
+# without baking it into user_data (which causes hash drift mid-apply).
+# The EC2 instance role already has ssm:GetParameter via AmazonSSMManagedInstanceCore.
+
+resource "aws_ssm_parameter" "db_secret_arn" {
+  name  = "/${var.project_name}/${var.environment}/db-secret-arn"
+  type  = "SecureString"
+  value = aws_db_instance.postgres.master_user_secret[0].secret_arn
+
+  tags = {
+    Name = "${var.project_name}-db-secret-arn-${var.environment}"
+  }
 }

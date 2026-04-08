@@ -1,31 +1,27 @@
 ###############################################################################
 # infra/vpc.tf
 #
-# PURPOSE: Defines the network foundation — VPC, public and private subnets,
-#          internet gateway, and route tables.
+# PURPOSE: Network foundation — VPC, public/private subnets, IGW, route tables.
 #
 # ARCHITECTURE:
-#   Public subnets  → have a route to the Internet Gateway → EC2 lives here
-#   Private subnets → NO route to the internet             → RDS lives here
+#   Public subnets  → route to Internet Gateway → EC2 lives here
+#   Private subnets → NO internet route          → RDS lives here
 #
-# This architectural separation (not just a security group rule) makes it
-# structurally impossible for the database to be reached from the internet.
+# The private subnets have no IGW route. This is an architectural constraint —
+# no security group misconfiguration can expose the database to the internet.
 ###############################################################################
-
-# ── VPC ───────────────────────────────────────────────────────────────────────
 
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
-  enable_dns_hostnames = true # Required for RDS endpoint resolution
+  enable_dns_hostnames = true
 
   tags = {
-    Name = "${var.project_name}-vpc-${var.environment}"
+    Name = local.names.vpc
   }
 }
 
 # ── Public Subnets ────────────────────────────────────────────────────────────
-# Spread across two AZs for resilience. EC2 and the load balancer (future) live here.
 
 resource "aws_subnet" "public" {
   count = length(var.public_subnet_cidrs)
@@ -33,16 +29,15 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_cidrs[count.index]
   availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = false # We use an Elastic IP instead; avoid auto-assign
+  map_public_ip_on_launch = false
 
   tags = {
-    Name = "${var.project_name}-public-subnet-${count.index + 1}-${var.environment}"
+    Name = "${local.prefix}-public-subnet-${count.index + 1}"
     Tier = "public"
   }
 }
 
 # ── Private Subnets ───────────────────────────────────────────────────────────
-# No internet route. RDS subnet group requires subnets in at least two AZs.
 
 resource "aws_subnet" "private" {
   count = length(var.private_subnet_cidrs)
@@ -52,24 +47,22 @@ resource "aws_subnet" "private" {
   availability_zone = var.availability_zones[count.index]
 
   tags = {
-    Name = "${var.project_name}-private-subnet-${count.index + 1}-${var.environment}"
+    Name = "${local.prefix}-private-subnet-${count.index + 1}"
     Tier = "private"
   }
 }
 
 # ── Internet Gateway ──────────────────────────────────────────────────────────
-# Attaches the VPC to the internet. Only public subnets route through this.
 
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "${var.project_name}-igw-${var.environment}"
+    Name = local.names.igw
   }
 }
 
 # ── Public Route Table ────────────────────────────────────────────────────────
-# Routes all non-local traffic (0.0.0.0/0) to the internet gateway.
 
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
@@ -80,11 +73,10 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "${var.project_name}-public-rt-${var.environment}"
+    Name = local.names.public_rt
   }
 }
 
-# Associate each public subnet with the public route table.
 resource "aws_route_table_association" "public" {
   count = length(aws_subnet.public)
 
@@ -93,14 +85,14 @@ resource "aws_route_table_association" "public" {
 }
 
 # ── Private Route Table ───────────────────────────────────────────────────────
-# No internet route. Local VPC traffic only. This is the architectural guarantee
-# that the database cannot be reached from the internet.
+# No internet route — architectural guarantee that RDS cannot be reached
+# from the internet regardless of security group configuration.
 
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "${var.project_name}-private-rt-${var.environment}"
+    Name = local.names.private_rt
   }
 }
 
@@ -109,4 +101,33 @@ resource "aws_route_table_association" "private" {
 
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private.id
+}
+
+# ── VPC Flow Logs ─────────────────────────────────────────────────────────────
+# Captures metadata about all IP traffic in/out of the VPC — source IP,
+# destination IP, port, protocol, and accept/reject decision. Essential for
+# incident investigation and security auditing.
+#
+# Logs are published to CloudWatch Logs. The IAM role that grants VPC the
+# permission to write is managed in modules/iam.
+
+resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
+  name              = local.names.flow_log_group
+  retention_in_days = 30
+  kms_key_id        = module.secrets.kms_key_arn
+
+  tags = {
+    Name = local.names.flow_log_group
+  }
+}
+
+resource "aws_flow_log" "main" {
+  vpc_id          = aws_vpc.main.id
+  traffic_type    = "ALL" # Capture ACCEPT, REJECT, and all traffic
+  iam_role_arn    = module.iam.vpc_flow_logs_role_arn
+  log_destination = aws_cloudwatch_log_group.vpc_flow_logs.arn
+
+  tags = {
+    Name = local.names.flow_log
+  }
 }
