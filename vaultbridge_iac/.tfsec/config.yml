@@ -1,0 +1,27 @@
+###############################################################################
+# .tfsec/config.yml
+#
+# PURPOSE: tfsec static analysis configuration.
+#
+# tfsec scans Terraform code for security misconfigurations BEFORE deployment.
+# It catches issues like open security groups, unencrypted storage, missing
+# logging — things that would pass terraform validate but fail a security audit.
+#
+# INSTALL:
+#   brew install tfsec                    # macOS
+#   choco install tfsec                   # Windows
+#   docker pull aquasec/tfsec             # Docker
+#
+# RUN:
+#   tfsec ./infra                         # Scan the infra workspace
+#   tfsec ./infra --format lovely         # Human-readable output
+#   tfsec ./infra --format json           # Machine-readable for CI
+#   tfsec ./infra --minimum-severity HIGH # Only fail on HIGH+
+###############################################################################
+
+minimum_severity: MEDIUM
+
+exclude:
+  # aws-s3-enable-bucket-logging: Bootstrap bucket logging creates a circular
+  # dependency (you'd need another bucket to log to). Acceptable for state bucket.
+  - aws-s3-enable-bucket-logging

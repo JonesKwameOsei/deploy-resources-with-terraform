@@ -1,0 +1,66 @@
+###############################################################################
+# .github/workflows/terraform-lint.yml
+#
+# PURPOSE: CI pipeline that runs on every pull request to enforce code quality
+#          and security checks before any human review or apply.
+#
+# STEPS:
+#   1. terraform fmt   — reject unformatted code
+#   2. terraform validate — catch syntax/config errors
+#   3. tfsec           — catch security misconfigurations
+#
+# This pipeline is the automated gate before peer review (Step 4 in the
+# VaultBridge deployment workflow).
+###############################################################################
+
+name: Terraform Lint & Security Scan
+
+on:
+  pull_request:
+    paths:
+      - "vaultbridge_iac/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "vaultbridge_iac/**"
+
+jobs:
+  terraform-checks:
+    name: Format, Validate & tfsec
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.5"
+
+      # ── Format Check ────────────────────────────────────────────────────────
+      - name: terraform fmt (bootstrap)
+        run: terraform fmt -check -recursive
+        working-directory: vaultbridge_iac/bootstrap
+
+      - name: terraform fmt (infra)
+        run: terraform fmt -check -recursive
+        working-directory: vaultbridge_iac/infra
+
+      # ── Validate ─────────────────────────────────────────────────────────────
+      # terraform validate requires init, but we skip the backend for CI
+      - name: terraform init (infra - local backend for validation)
+        run: terraform init -backend=false
+        working-directory: vaultbridge_iac/infra
+
+      - name: terraform validate (infra)
+        run: terraform validate
+        working-directory: vaultbridge_iac/infra
+
+      # ── tfsec Security Scan ──────────────────────────────────────────────────
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: vaultbridge_iac
+          additional_args: --config-file .tfsec/config.yml --minimum-severity MEDIUM

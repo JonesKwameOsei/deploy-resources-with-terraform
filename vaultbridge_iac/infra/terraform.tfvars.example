@@ -1,0 +1,55 @@
+###############################################################################
+# terraform.tfvars.example
+#
+# PURPOSE: Template showing all required variable values.
+#
+# SETUP:
+#   1. Copy this file:  cp terraform.tfvars.example terraform.tfvars
+#   2. Fill in your actual values in terraform.tfvars
+#   3. terraform.tfvars is gitignored — never commit it
+#
+# WHY: This file is safe to commit (no real secrets). It documents what
+#      values are needed without exposing them.
+###############################################################################
+
+# General
+environment  = "dev"
+aws_region   = "us-east-1"
+project_name = "vaultbridge"
+
+# Networking
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
+availability_zones   = ["us-east-1a", "us-east-1b"]
+
+# Compute
+# Find the latest Amazon Linux 2023 AMI for your region:
+#   aws ec2 describe-images --owners amazon \
+#     --filters "Name=name,Values=al2023-ami-*-x86_64" \
+#     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+#     --output text
+ec2_ami_id        = "ami-REPLACE_WITH_LATEST_AL2023_AMI"
+ec2_instance_type = "t3.micro"
+key_pair_name     = "vaultbridge-dev"
+
+# Restrict SSH to your IP only. Find your IP: curl ifconfig.me
+allowed_ssh_cidr = "YOUR_IP_ADDRESS/32"
+
+# Database
+db_instance_class    = "db.t3.micro"
+db_name              = "vaultbridge"
+db_allocated_storage = 20
+
+# db_username and db_password are NOT set here.
+# Store them in SSM Parameter Store before running terraform apply:
+#
+#   aws ssm put-parameter \
+#     --name "/vaultbridge/dev/db_username" \
+#     --value "vaultbridge_admin" \
+#     --type SecureString
+#
+#   aws ssm put-parameter \
+#     --name "/vaultbridge/dev/db_password" \
+#     --value "your-strong-password-min-16-chars" \
+#     --type SecureString

@@ -1,0 +1,29 @@
+# Terraform state — remote state (S3) is the source of truth
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+**/terraform.tfstate*
+**/.terraform.lock.hcl
+
+# Variable files with real values — never commit secrets
+**/terraform.tfvars
+**/*.tfvars
+**/*.tfvars.json
+
+# Saved plan files
+**/tfplan
+**/*.tfplan
+
+# SSH keys
+*.pem
+*.key
+*_rsa
+*_ed25519
+devkey
+testkey
+
+# Project documentation — internal use only, not for version control
+project_objectives.md
+project_scope.md
+techstack.md
+step-by-step.md
